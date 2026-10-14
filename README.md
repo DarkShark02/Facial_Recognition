@@ -4,8 +4,6 @@ Real-time face recognition from your webcam, written in Python with [OpenCV](htt
 
 The program recognizes faces you have already registered. When it sees the same unknown face for a few frames, it asks you for a name and saves the face right from the interface.
 
-> The on-screen messages are in Italian (e.g. *Riconosciuto* = Recognized, *Sconosciuto* = Unknown, *Inserisci nome* = Enter name).
-
 ## Features
 
 - Real-time face recognition from the webcam
@@ -79,7 +77,7 @@ python main.py --camera 1 --tolerance 0.5 --model cnn --faces-dir faces
 ### How a scan works
 
 1. Press `S`: the program analyzes the next frames.
-2. If it finds a known face, it shows `Riconosciuto: <name>` and stops.
+2. If it finds a known face, it shows `Recognized: <name>` and stops.
 3. If it sees the same unknown person for several frames, it enters **registration mode**: type a name and press `ENTER`. The photo is saved in `faces/<name>/`.
 4. If nobody is recognized within a set number of frames, the scan stops.
 
@@ -114,7 +112,7 @@ More settings are at the top of [`main.py`](main.py):
 ## Troubleshooting
 
 - **`pip install` fails on `dlib`**: CMake or the C++ compiler is missing. See [Requirements](#requirements).
-- **"Impossibile aprire la webcam"** (cannot open webcam): another program is using the camera, or it has a different index (`--camera 1`).
+- **"Cannot open webcam"**: another program is using the camera, or it has a different index (`--camera 1`).
 - **Wrong people are recognized**: lower the tolerance (`--tolerance 0.5`) and add more photos per person.
 - **Registered people are not recognized**: raise the tolerance (`--tolerance 0.65`) or add photos taken in lighting similar to your webcam's.
 

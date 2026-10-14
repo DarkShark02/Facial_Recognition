@@ -9,7 +9,7 @@ import face_recognition
 import numpy as np
 
 # =========================================
-# CONFIGURAZIONE
+# CONFIGURATION
 # =========================================
 
 KNOWN_FACES_DIR = "faces"
@@ -24,15 +24,15 @@ MAX_SCAN_FRAMES = 30
 AUTO_SAVE_UNKNOWN = True
 UNKNOWN_BUFFER_SIZE = 10
 
-# margine aggiunto attorno al volto salvato (frazione della dimensione del volto),
-# serve perché il rilevatore trovi di nuovo il volto quando la foto viene ricaricata
+# margin added around the saved face (fraction of the face size),
+# so the detector can find the face again when the photo is reloaded
 CROP_MARGIN = 0.6
 
 MAX_NAME_LENGTH = 30
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-UNKNOWN_LABEL = "Sconosciuto"
+UNKNOWN_LABEL = "Unknown"
 WINDOW_NAME = "Face Recognition System"
 
 KEY_ENTER = (13, 10)
@@ -46,14 +46,14 @@ COLOR_CYAN = (255, 255, 0)
 COLOR_WHITE = (255, 255, 255)
 
 # =========================================
-# DATABASE VOLTI
+# FACE DATABASE
 # =========================================
 
 def load_known_faces(faces_dir):
     """
-    Carica i volti noti. Sono supportati due formati:
-      faces/<nome>.jpg            -> una foto per persona
-      faces/<nome>/<qualsiasi>.jpg -> più foto per la stessa persona
+    Loads the known faces. Two layouts are supported:
+      faces/<name>.jpg         -> one photo per person
+      faces/<name>/<any>.jpg   -> several photos of the same person
     """
 
     encodings = []
@@ -61,7 +61,7 @@ def load_known_faces(faces_dir):
 
     os.makedirs(faces_dir, exist_ok=True)
 
-    print("Caricamento volti...")
+    print("Loading faces...")
 
     for entry in sorted(os.listdir(faces_dir)):
 
@@ -91,11 +91,11 @@ def load_known_faces(faces_dir):
                 image = face_recognition.load_image_file(image_path)
                 face_encodings = face_recognition.face_encodings(image)
             except Exception as e:
-                print(f"Errore caricamento {image_path}: {e}")
+                print(f"Error loading {image_path}: {e}")
                 continue
 
             if len(face_encodings) == 0:
-                print(f"Nessun volto trovato in {image_path}")
+                print(f"No face found in {image_path}")
                 continue
 
             encodings.append(face_encodings[0])
@@ -103,9 +103,9 @@ def load_known_faces(faces_dir):
             loaded += 1
 
         if loaded > 0:
-            print(f"Caricato: {person_name} ({loaded} foto)")
+            print(f"Loaded: {person_name} ({loaded} photo(s))")
 
-    print(f"Volti caricati: {len(set(names))} persone, {len(encodings)} foto.")
+    print(f"Faces loaded: {len(set(names))} people, {len(encodings)} photos.")
 
     return encodings, names
 
@@ -118,7 +118,7 @@ def is_image(file_name):
 
 
 def sanitize_name(name):
-    """Tiene solo lettere, numeri, spazi, '-' e '_' così il nome è sicuro come nome di cartella."""
+    """Keeps only letters, digits, spaces, '-' and '_' so the name is safe as a folder name."""
 
     name = re.sub(r"[^A-Za-z0-9 _-]", "", name)
     name = re.sub(r"\s+", " ", name).strip()
@@ -145,8 +145,8 @@ def crop_with_margin(frame, face_box, margin):
 
 def save_image(path, image):
     """
-    Come cv2.imwrite, ma funziona anche con percorsi che contengono
-    caratteri non ASCII (cv2.imwrite su Windows fallisce in quel caso).
+    Like cv2.imwrite, but also works with paths containing
+    non-ASCII characters (cv2.imwrite fails on them on Windows).
     """
 
     ok, buffer = cv2.imencode(os.path.splitext(path)[1], image)
@@ -163,17 +163,17 @@ def save_image(path, image):
 
 
 def register_new_face(faces_dir, name, frame, encoding, face_box):
-    """Salva la foto in faces/<nome>/<timestamp>.jpg. Restituisce True se è andato a buon fine."""
+    """Saves the photo as faces/<name>/<timestamp>.jpg. Returns True on success."""
 
     face_crop = crop_with_margin(frame, face_box, CROP_MARGIN)
 
     if face_crop.size == 0:
-        print("Errore crop volto")
+        print("Error cropping face")
         return False
 
     person_dir = os.path.join(faces_dir, name)
 
-    # un vecchio faces/<nome>.jpg viene spostato nella cartella della persona
+    # an old faces/<name>.jpg is moved into the person's folder
     for ext in IMAGE_EXTENSIONS:
         legacy_path = os.path.join(faces_dir, name + ext)
         if os.path.isfile(legacy_path):
@@ -188,15 +188,15 @@ def register_new_face(faces_dir, name, frame, encoding, face_box):
     )
 
     if not save_image(file_path, face_crop):
-        print(f"Errore salvataggio {file_path}")
+        print(f"Error saving {file_path}")
         return False
 
-    print(f"Registrato: {name} -> {file_path}")
+    print(f"Registered: {name} -> {file_path}")
 
     return True
 
 # =========================================
-# APPLICAZIONE
+# APPLICATION
 # =========================================
 
 class FaceRecognitionApp:
@@ -226,7 +226,7 @@ class FaceRecognitionApp:
         self.unknown_face_encoding = None
         self.unknown_face_box = None
 
-        self.set_status("Premi S per avviare", COLOR_CYAN)
+        self.set_status("Press S to start", COLOR_CYAN)
 
     def set_status(self, message, color):
         self.status_message = message
@@ -240,7 +240,7 @@ class FaceRecognitionApp:
         self.face_names = []
 
     # =====================================
-    # SCANSIONE
+    # SCAN
     # =====================================
 
     def start_scan(self):
@@ -249,9 +249,9 @@ class FaceRecognitionApp:
 
         self.recognition_active = True
 
-        self.set_status("Scansione in corso...", COLOR_CYAN)
+        self.set_status("Scanning...", COLOR_CYAN)
 
-        print("\nScansione avviata")
+        print("\nScan started")
 
     def identify(self, encoding):
 
@@ -272,8 +272,8 @@ class FaceRecognitionApp:
 
     def add_to_unknown_buffer(self, encoding, face_box):
         """
-        Il buffer deve contenere sempre la stessa persona: se arriva un volto
-        diverso dal primo del buffer, si ricomincia da capo.
+        The buffer must always hold the same person: if a face different
+        from the first one in the buffer shows up, start over.
         """
 
         if self.unknown_face_buffer:
@@ -338,32 +338,32 @@ class FaceRecognitionApp:
                 recognized.append(name)
 
         # =================================
-        # VOLTO NOTO TROVATO
+        # KNOWN FACE FOUND
         # =================================
 
         if recognized:
 
             names = ", ".join(dict.fromkeys(recognized))
 
-            print(f"Riconosciuto: {names}")
+            print(f"Recognized: {names}")
 
             self.reset_scan()
 
-            self.set_status(f"Riconosciuto: {names}", COLOR_GREEN)
+            self.set_status(f"Recognized: {names}", COLOR_GREEN)
 
             return
 
         # =================================
-        # REGISTRAZIONE AUTOMATICA
+        # AUTOMATIC REGISTRATION
         # =================================
 
-        # con più volti sconosciuti nell'inquadratura non si sa chi registrare
+        # with several unknown faces in view there is no way to know whom to register
         if len(unknown) == 1:
             self.add_to_unknown_buffer(*unknown[0])
 
         if AUTO_SAVE_UNKNOWN and len(self.unknown_face_buffer) >= UNKNOWN_BUFFER_SIZE:
 
-            print("Volto sconosciuto stabile rilevato")
+            print("Stable unknown face detected")
 
             encodings = [e for e, _ in self.unknown_face_buffer]
 
@@ -376,7 +376,7 @@ class FaceRecognitionApp:
             self.register_mode = True
             self.typed_name = ""
 
-            self.set_status("Inserisci nome e premi ENTER (ESC annulla)", COLOR_YELLOW)
+            self.set_status("Type a name and press ENTER (ESC to cancel)", COLOR_YELLOW)
 
             return
 
@@ -387,9 +387,9 @@ class FaceRecognitionApp:
         if self.processing_frame_count >= MAX_SCAN_FRAMES:
 
             if unknown or self.unknown_face_buffer:
-                message = "Nessun volto noto rilevato"
+                message = "No known face detected"
             else:
-                message = "Nessun volto rilevato"
+                message = "No face detected"
 
             print(message)
 
@@ -398,7 +398,7 @@ class FaceRecognitionApp:
             self.set_status(message, COLOR_RED)
 
     # =====================================
-    # REGISTRAZIONE
+    # REGISTRATION
     # =====================================
 
     def confirm_registration(self):
@@ -407,7 +407,7 @@ class FaceRecognitionApp:
 
         if name == "":
 
-            self.set_status("Nome non valido", COLOR_RED)
+            self.set_status("Invalid name", COLOR_RED)
 
         elif register_new_face(
             self.faces_dir,
@@ -420,19 +420,19 @@ class FaceRecognitionApp:
             self.known_face_encodings.append(self.unknown_face_encoding)
             self.known_face_names.append(name)
 
-            self.set_status(f"Registrato: {name}", COLOR_GREEN)
+            self.set_status(f"Registered: {name}", COLOR_GREEN)
 
         else:
 
-            self.set_status("Errore durante il salvataggio", COLOR_RED)
+            self.set_status("Error while saving", COLOR_RED)
 
         self.exit_register_mode()
 
     def cancel_registration(self):
 
-        print("Registrazione annullata")
+        print("Registration cancelled")
 
-        self.set_status("Registrazione annullata", COLOR_CYAN)
+        self.set_status("Registration cancelled", COLOR_CYAN)
 
         self.exit_register_mode()
 
@@ -448,7 +448,7 @@ class FaceRecognitionApp:
         self.reset_scan()
 
     # =====================================
-    # TASTIERA
+    # KEYBOARD
     # =====================================
 
     def handle_key(self, key):
@@ -479,7 +479,7 @@ class FaceRecognitionApp:
             self.start_scan()
 
     # =====================================
-    # DISEGNO
+    # DRAWING
     # =====================================
 
     def draw(self, frame):
@@ -526,7 +526,7 @@ class FaceRecognitionApp:
 
             cv2.putText(
                 frame,
-                "Inserisci nome:",
+                "Enter name:",
                 (30, 90),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
@@ -545,7 +545,7 @@ class FaceRecognitionApp:
             )
 
     # =====================================
-    # LOOP PRINCIPALE
+    # MAIN LOOP
     # =====================================
 
     def run(self, camera_index):
@@ -553,15 +553,15 @@ class FaceRecognitionApp:
         cap = cv2.VideoCapture(camera_index)
 
         if not cap.isOpened():
-            print(f"Impossibile aprire la webcam (indice {camera_index})")
+            print(f"Cannot open webcam (index {camera_index})")
             return 1
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        print("\nPremi:")
-        print("S -> avvia scansione")
-        print("Q -> esci")
+        print("\nKeys:")
+        print("S -> start scan")
+        print("Q -> quit")
 
         try:
 
@@ -570,10 +570,10 @@ class FaceRecognitionApp:
                 ret, frame = cap.read()
 
                 if not ret:
-                    print("Errore lettura webcam")
+                    print("Error reading from webcam")
                     break
 
-                # effetto specchio
+                # mirror effect
                 frame = cv2.flip(frame, 1)
 
                 if self.recognition_active:
@@ -585,7 +585,7 @@ class FaceRecognitionApp:
 
                 self.handle_key(cv2.waitKey(1) & 0xFF)
 
-                # chiusura con la X della finestra
+                # window closed with the X button
                 if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
                     break
 
@@ -603,34 +603,34 @@ class FaceRecognitionApp:
 def parse_args():
 
     parser = argparse.ArgumentParser(
-        description="Riconoscimento facciale in tempo reale da webcam."
+        description="Real-time face recognition from your webcam."
     )
 
     parser.add_argument(
         "--camera",
         type=int,
         default=CAMERA_INDEX,
-        help=f"indice della webcam (default: {CAMERA_INDEX})"
+        help=f"webcam index (default: {CAMERA_INDEX})"
     )
 
     parser.add_argument(
         "--tolerance",
         type=float,
         default=TOLERANCE,
-        help=f"soglia di riconoscimento, più bassa = più severa (default: {TOLERANCE})"
+        help=f"recognition threshold, lower = stricter (default: {TOLERANCE})"
     )
 
     parser.add_argument(
         "--model",
         choices=["hog", "cnn"],
         default=MODEL,
-        help=f"modello di rilevamento volti (default: {MODEL})"
+        help=f"face detection model (default: {MODEL})"
     )
 
     parser.add_argument(
         "--faces-dir",
         default=KNOWN_FACES_DIR,
-        help=f"cartella dei volti noti (default: {KNOWN_FACES_DIR})"
+        help=f"folder with the known faces (default: {KNOWN_FACES_DIR})"
     )
 
     return parser.parse_args()
