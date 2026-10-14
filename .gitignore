@@ -1,1 +1,17 @@
+# ambiente virtuale
 venv/
+.venv/
+
+# cache Python
+__pycache__/
+*.pyc
+
+# volti registrati: sono dati personali, restano in locale
+faces/*
+!faces/.gitkeep
+
+# IDE / sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,9 +1,12 @@
+import argparse
+import os
+import re
+import sys
+import time
+
 import cv2
 import face_recognition
-import os
-import sys
 import numpy as np
-import time
 
 # =========================================
 # CONFIGURAZIONE
@@ -13,6 +16,7 @@ KNOWN_FACES_DIR = "faces"
 
 TOLERANCE = 0.6
 MODEL = "hog"
+CAMERA_INDEX = 0
 
 SCALE_FACTOR = 0.25
 MAX_SCAN_FRAMES = 30
@@ -20,151 +24,272 @@ MAX_SCAN_FRAMES = 30
 AUTO_SAVE_UNKNOWN = True
 UNKNOWN_BUFFER_SIZE = 10
 
-# =========================================
-# VARIABILI GLOBALI
-# =========================================
+# margine aggiunto attorno al volto salvato (frazione della dimensione del volto),
+# serve perché il rilevatore trovi di nuovo il volto quando la foto viene ricaricata
+CROP_MARGIN = 0.6
 
-known_face_encodings = []
-known_face_names = []
+MAX_NAME_LENGTH = 30
 
-recognition_active = False
-register_mode = False
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-processing_frame_count = 0
+UNKNOWN_LABEL = "Sconosciuto"
+WINDOW_NAME = "Face Recognition System"
 
-last_face_locations = []
-last_face_names = []
+KEY_ENTER = (13, 10)
+KEY_BACKSPACE = (8, 127)
+KEY_ESC = 27
 
-status_message = "Premi S per avviare"
-status_color = (255, 255, 0)
-
-last_recognized = None
-
-unknown_face_buffer = []
-
-typed_name = ""
-
-unknown_face_image = None
-unknown_face_encoding = None
-unknown_face_box = None
+COLOR_GREEN = (0, 255, 0)
+COLOR_RED = (0, 0, 255)
+COLOR_YELLOW = (0, 255, 255)
+COLOR_CYAN = (255, 255, 0)
+COLOR_WHITE = (255, 255, 255)
 
 # =========================================
-# FUNZIONE REGISTRAZIONE
+# DATABASE VOLTI
 # =========================================
 
-def register_new_face(name, frame, encoding, face_box):
+def load_known_faces(faces_dir):
+    """
+    Carica i volti noti. Sono supportati due formati:
+      faces/<nome>.jpg            -> una foto per persona
+      faces/<nome>/<qualsiasi>.jpg -> più foto per la stessa persona
+    """
 
-    global known_face_encodings
-    global known_face_names
+    encodings = []
+    names = []
 
-    t, r, b, l = face_box
+    os.makedirs(faces_dir, exist_ok=True)
 
-    t = max(0, t)
-    r = max(0, r)
-    b = max(0, b)
-    l = max(0, l)
+    print("Caricamento volti...")
 
-    face_crop = frame[t:b, l:r]
+    for entry in sorted(os.listdir(faces_dir)):
+
+        if entry.startswith("."):
+            continue
+
+        path = os.path.join(faces_dir, entry)
+
+        if os.path.isdir(path):
+            person_name = entry
+            image_paths = [
+                os.path.join(path, f)
+                for f in sorted(os.listdir(path))
+                if is_image(f)
+            ]
+        elif is_image(entry):
+            person_name = os.path.splitext(entry)[0]
+            image_paths = [path]
+        else:
+            continue
+
+        loaded = 0
+
+        for image_path in image_paths:
+
+            try:
+                image = face_recognition.load_image_file(image_path)
+                face_encodings = face_recognition.face_encodings(image)
+            except Exception as e:
+                print(f"Errore caricamento {image_path}: {e}")
+                continue
+
+            if len(face_encodings) == 0:
+                print(f"Nessun volto trovato in {image_path}")
+                continue
+
+            encodings.append(face_encodings[0])
+            names.append(person_name)
+            loaded += 1
+
+        if loaded > 0:
+            print(f"Caricato: {person_name} ({loaded} foto)")
+
+    print(f"Volti caricati: {len(set(names))} persone, {len(encodings)} foto.")
+
+    return encodings, names
+
+
+def is_image(file_name):
+    return (
+        not file_name.startswith(".")
+        and os.path.splitext(file_name)[1].lower() in IMAGE_EXTENSIONS
+    )
+
+
+def sanitize_name(name):
+    """Tiene solo lettere, numeri, spazi, '-' e '_' così il nome è sicuro come nome di cartella."""
+
+    name = re.sub(r"[^A-Za-z0-9 _-]", "", name)
+    name = re.sub(r"\s+", " ", name).strip()
+
+    return name[:MAX_NAME_LENGTH]
+
+
+def crop_with_margin(frame, face_box, margin):
+
+    top, right, bottom, left = face_box
+
+    height, width = frame.shape[:2]
+
+    margin_y = int((bottom - top) * margin)
+    margin_x = int((right - left) * margin)
+
+    top = max(0, top - margin_y)
+    bottom = min(height, bottom + margin_y)
+    left = max(0, left - margin_x)
+    right = min(width, right + margin_x)
+
+    return frame[top:bottom, left:right]
+
+
+def save_image(path, image):
+    """
+    Come cv2.imwrite, ma funziona anche con percorsi che contengono
+    caratteri non ASCII (cv2.imwrite su Windows fallisce in quel caso).
+    """
+
+    ok, buffer = cv2.imencode(os.path.splitext(path)[1], image)
+
+    if not ok:
+        return False
+
+    try:
+        buffer.tofile(path)
+    except OSError:
+        return False
+
+    return True
+
+
+def register_new_face(faces_dir, name, frame, encoding, face_box):
+    """Salva la foto in faces/<nome>/<timestamp>.jpg. Restituisce True se è andato a buon fine."""
+
+    face_crop = crop_with_margin(frame, face_box, CROP_MARGIN)
 
     if face_crop.size == 0:
         print("Errore crop volto")
         return False
 
-    filename = os.path.join(
-        KNOWN_FACES_DIR,
-        f"{name}.jpg"
+    person_dir = os.path.join(faces_dir, name)
+
+    # un vecchio faces/<nome>.jpg viene spostato nella cartella della persona
+    for ext in IMAGE_EXTENSIONS:
+        legacy_path = os.path.join(faces_dir, name + ext)
+        if os.path.isfile(legacy_path):
+            os.makedirs(person_dir, exist_ok=True)
+            os.replace(legacy_path, os.path.join(person_dir, "1" + ext))
+
+    os.makedirs(person_dir, exist_ok=True)
+
+    file_path = os.path.join(
+        person_dir,
+        time.strftime("%Y%m%d_%H%M%S") + ".jpg"
     )
 
-    cv2.imwrite(filename, face_crop)
+    if not save_image(file_path, face_crop):
+        print(f"Errore salvataggio {file_path}")
+        return False
 
-    known_face_encodings.append(encoding)
-    known_face_names.append(name)
-
-    print(f"Registrato nuovo utente: {name}")
+    print(f"Registrato: {name} -> {file_path}")
 
     return True
 
 # =========================================
-# CARICAMENTO VOLTI
+# APPLICAZIONE
 # =========================================
 
-print("Caricamento volti...")
+class FaceRecognitionApp:
 
-if not os.path.exists(KNOWN_FACES_DIR):
-    os.makedirs(KNOWN_FACES_DIR)
+    def __init__(self, faces_dir, tolerance, model):
 
-for file_name in os.listdir(KNOWN_FACES_DIR):
+        self.faces_dir = faces_dir
+        self.tolerance = tolerance
+        self.model = model
 
-    if file_name.startswith("."):
-        continue
+        self.known_face_encodings, self.known_face_names = load_known_faces(faces_dir)
 
-    path = os.path.join(
-        KNOWN_FACES_DIR,
-        file_name
-    )
+        self.recognition_active = False
+        self.register_mode = False
+        self.running = True
 
-    person_name = os.path.splitext(file_name)[0]
+        self.processing_frame_count = 0
 
-    try:
+        self.face_locations = []
+        self.face_names = []
 
-        image = face_recognition.load_image_file(path)
+        self.unknown_face_buffer = []
 
-        encodings = face_recognition.face_encodings(image)
+        self.typed_name = ""
 
-        if len(encodings) > 0:
+        self.unknown_face_image = None
+        self.unknown_face_encoding = None
+        self.unknown_face_box = None
 
-            known_face_encodings.append(encodings[0])
-            known_face_names.append(person_name)
+        self.set_status("Premi S per avviare", COLOR_CYAN)
 
-            print(f"Caricato: {person_name}")
+    def set_status(self, message, color):
+        self.status_message = message
+        self.status_color = color
 
-        else:
-            print(f"Nessun volto trovato in {file_name}")
-
-    except Exception as e:
-        print(f"Errore caricamento {file_name}: {e}")
-
-print("Volti caricati.")
-
-# =========================================
-# WEBCAM
-# =========================================
-
-cap = cv2.VideoCapture(0)
-
-if not cap.isOpened():
-    print("Errore webcam")
-    sys.exit()
-
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-print("\nPremi:")
-print("S -> avvia scansione")
-print("Q -> esci")
-
-# =========================================
-# LOOP PRINCIPALE
-# =========================================
-
-while True:
-
-    ret, frame = cap.read()
-
-    if not ret:
-        print("Errore lettura webcam")
-        break
-
-    # effetto specchio
-    frame = cv2.flip(frame, 1)
+    def reset_scan(self):
+        self.recognition_active = False
+        self.processing_frame_count = 0
+        self.unknown_face_buffer = []
+        self.face_locations = []
+        self.face_names = []
 
     # =====================================
-    # SCANSIONE ATTIVA
+    # SCANSIONE
     # =====================================
 
-    if recognition_active and not register_mode:
+    def start_scan(self):
 
-        processing_frame_count += 1
+        self.reset_scan()
+
+        self.recognition_active = True
+
+        self.set_status("Scansione in corso...", COLOR_CYAN)
+
+        print("\nScansione avviata")
+
+    def identify(self, encoding):
+
+        if len(self.known_face_encodings) == 0:
+            return UNKNOWN_LABEL
+
+        distances = face_recognition.face_distance(
+            self.known_face_encodings,
+            encoding
+        )
+
+        best_match_index = int(np.argmin(distances))
+
+        if distances[best_match_index] <= self.tolerance:
+            return self.known_face_names[best_match_index]
+
+        return UNKNOWN_LABEL
+
+    def add_to_unknown_buffer(self, encoding, face_box):
+        """
+        Il buffer deve contenere sempre la stessa persona: se arriva un volto
+        diverso dal primo del buffer, si ricomincia da capo.
+        """
+
+        if self.unknown_face_buffer:
+
+            first_encoding = self.unknown_face_buffer[0][0]
+
+            distance = face_recognition.face_distance([first_encoding], encoding)[0]
+
+            if distance > self.tolerance:
+                self.unknown_face_buffer = []
+
+        self.unknown_face_buffer.append((encoding, face_box))
+
+    def process_frame(self, frame):
+
+        self.processing_frame_count += 1
 
         small_frame = cv2.resize(
             frame,
@@ -173,14 +298,11 @@ while True:
             fy=SCALE_FACTOR
         )
 
-        rgb_small = cv2.cvtColor(
-            small_frame,
-            cv2.COLOR_BGR2RGB
-        )
+        rgb_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
         face_locations = face_recognition.face_locations(
             rgb_small,
-            model=MODEL
+            model=self.model
         )
 
         face_encodings = face_recognition.face_encodings(
@@ -188,349 +310,340 @@ while True:
             face_locations
         )
 
-        last_face_locations = []
-        last_face_names = []
+        scale = 1 / SCALE_FACTOR
 
-        for (top, right, bottom, left), encoding in zip(
-            face_locations,
-            face_encodings
-        ):
+        self.face_locations = []
+        self.face_names = []
 
-            name = "Sconosciuto"
+        recognized = []
+        unknown = []
 
-            # =============================
-            # CONFRONTO VOLTI
-            # =============================
+        for (top, right, bottom, left), encoding in zip(face_locations, face_encodings):
 
-            if len(known_face_encodings) > 0:
-
-                matches = face_recognition.compare_faces(
-                    known_face_encodings,
-                    encoding,
-                    TOLERANCE
-                )
-
-                distances = face_recognition.face_distance(
-                    known_face_encodings,
-                    encoding
-                )
-
-                best_match_index = np.argmin(distances)
-
-                if matches[best_match_index]:
-
-                    name = known_face_names[best_match_index]
-
-                    if name != last_recognized:
-
-                        print(f"Riconosciuto: {name}")
-
-                        last_recognized = name
-
-                        status_message = f"Riconosciuto: {name}"
-                        status_color = (0, 255, 0)
-
-                        recognition_active = False
-                        processing_frame_count = 0
-
-                        unknown_face_buffer = []
-
-                        last_face_locations = []
-                        last_face_names = []
-
-                        break
-
-            # =============================
-            # RIPORTA COORDINATE
-            # =============================
-
-            scale = int(1 / SCALE_FACTOR)
-
-            top *= scale
-            right *= scale
-            bottom *= scale
-            left *= scale
-
-            last_face_locations.append(
-                (top, right, bottom, left)
+            face_box = (
+                int(top * scale),
+                int(right * scale),
+                int(bottom * scale),
+                int(left * scale)
             )
 
-            last_face_names.append(name)
+            name = self.identify(encoding)
 
-            # =============================
-            # BUFFER SCONOSCIUTI
-            # =============================
+            self.face_locations.append(face_box)
+            self.face_names.append(name)
 
-            if name == "Sconosciuto":
+            if name == UNKNOWN_LABEL:
+                unknown.append((encoding, face_box))
+            else:
+                recognized.append(name)
 
-                unknown_face_buffer.append(
-                    (
-                        encoding,
-                        (top, right, bottom, left)
-                    )
-                )
+        # =================================
+        # VOLTO NOTO TROVATO
+        # =================================
 
-        # =====================================
+        if recognized:
+
+            names = ", ".join(dict.fromkeys(recognized))
+
+            print(f"Riconosciuto: {names}")
+
+            self.reset_scan()
+
+            self.set_status(f"Riconosciuto: {names}", COLOR_GREEN)
+
+            return
+
+        # =================================
         # REGISTRAZIONE AUTOMATICA
-        # =====================================
+        # =================================
 
-        if recognition_active and AUTO_SAVE_UNKNOWN:
+        # con più volti sconosciuti nell'inquadratura non si sa chi registrare
+        if len(unknown) == 1:
+            self.add_to_unknown_buffer(*unknown[0])
 
-            if len(unknown_face_buffer) >= UNKNOWN_BUFFER_SIZE:
+        if AUTO_SAVE_UNKNOWN and len(self.unknown_face_buffer) >= UNKNOWN_BUFFER_SIZE:
 
-                print("Volto sconosciuto stabile rilevato")
+            print("Volto sconosciuto stabile rilevato")
 
-                encs = [
-                    e for e, _ in unknown_face_buffer
-                ]
+            encodings = [e for e, _ in self.unknown_face_buffer]
 
-                avg_encoding = np.mean(
-                    encs,
-                    axis=0
-                )
+            self.unknown_face_image = frame.copy()
+            self.unknown_face_encoding = np.mean(encodings, axis=0)
+            self.unknown_face_box = self.unknown_face_buffer[-1][1]
 
-                t, r, b, l = unknown_face_buffer[-1][1]
+            self.reset_scan()
 
-                unknown_face_image = frame.copy()
-                unknown_face_encoding = avg_encoding
-                unknown_face_box = (t, r, b, l)
+            self.register_mode = True
+            self.typed_name = ""
 
-                register_mode = True
+            self.set_status("Inserisci nome e premi ENTER (ESC annulla)", COLOR_YELLOW)
 
-                recognition_active = False
+            return
 
-                processing_frame_count = 0
-
-                unknown_face_buffer = []
-
-                status_message = "Inserisci nome e premi ENTER"
-                status_color = (0, 255, 255)
-
-                # reset box
-                last_face_locations = []
-                last_face_names = []
-
-        # =====================================
+        # =================================
         # TIMEOUT
-        # =====================================
+        # =================================
 
-        if recognition_active and processing_frame_count >= MAX_SCAN_FRAMES:
+        if self.processing_frame_count >= MAX_SCAN_FRAMES:
 
-            print("Nessun volto noto rilevato")
+            if unknown or self.unknown_face_buffer:
+                message = "Nessun volto noto rilevato"
+            else:
+                message = "Nessun volto rilevato"
 
-            recognition_active = False
+            print(message)
 
-            processing_frame_count = 0
+            self.reset_scan()
 
-            unknown_face_buffer = []
-
-            last_face_locations = []
-            last_face_names = []
-
-            status_message = "Nessun volto rilevato"
-            status_color = (0, 0, 255)
+            self.set_status(message, COLOR_RED)
 
     # =====================================
-    # UI
+    # REGISTRAZIONE
     # =====================================
 
-    cv2.putText(
-        frame,
-        status_message,
-        (10, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        status_color,
-        2
-    )
+    def confirm_registration(self):
 
-    cv2.putText(
-        frame,
-        "S = scan | Q = quit",
-        (10, frame.shape[0] - 20),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
-        (255, 255, 255),
-        1
-    )
+        name = sanitize_name(self.typed_name)
 
-    # =====================================
-    # BOX VOLTI
-    # =====================================
+        if name == "":
 
-    for (top, right, bottom, left), name in zip(
-        last_face_locations,
-        last_face_names
-    ):
+            self.set_status("Nome non valido", COLOR_RED)
 
-        color = (0, 255, 0)
-
-        if name == "Sconosciuto":
-            color = (0, 0, 255)
-
-        cv2.rectangle(
-            frame,
-            (left, top),
-            (right, bottom),
-            color,
-            2
-        )
-
-        cv2.putText(
-            frame,
+        elif register_new_face(
+            self.faces_dir,
             name,
-            (left, top - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 255, 255),
-            1
-        )
+            self.unknown_face_image,
+            self.unknown_face_encoding,
+            self.unknown_face_box
+        ):
 
-    # =====================================
-    # INPUT NOME DA INTERFACCIA
-    # =====================================
+            self.known_face_encodings.append(self.unknown_face_encoding)
+            self.known_face_names.append(name)
 
-    if register_mode:
+            self.set_status(f"Registrato: {name}", COLOR_GREEN)
 
-        cv2.rectangle(
-            frame,
-            (20, 60),
-            (600, 120),
-            (40, 40, 40),
-            -1
-        )
+        else:
 
-        cv2.putText(
-            frame,
-            "Inserisci nome:",
-            (30, 90),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (255, 255, 255),
-            2
-        )
+            self.set_status("Errore durante il salvataggio", COLOR_RED)
 
-        cv2.putText(
-            frame,
-            typed_name,
-            (30, 115),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 255, 255),
-            2
-        )
+        self.exit_register_mode()
 
-    # =====================================
-    # MOSTRA FRAME
-    # =====================================
+    def cancel_registration(self):
 
-    cv2.imshow(
-        "Face Recognition System",
-        frame
-    )
+        print("Registrazione annullata")
+
+        self.set_status("Registrazione annullata", COLOR_CYAN)
+
+        self.exit_register_mode()
+
+    def exit_register_mode(self):
+
+        self.register_mode = False
+        self.typed_name = ""
+
+        self.unknown_face_image = None
+        self.unknown_face_encoding = None
+        self.unknown_face_box = None
+
+        self.reset_scan()
 
     # =====================================
     # TASTIERA
     # =====================================
 
-    key = cv2.waitKey(1) & 0xFF
+    def handle_key(self, key):
+
+        if key == 255:
+            return
+
+        if self.register_mode:
+
+            if key in KEY_ENTER:
+                self.confirm_registration()
+
+            elif key == KEY_ESC:
+                self.cancel_registration()
+
+            elif key in KEY_BACKSPACE:
+                self.typed_name = self.typed_name[:-1]
+
+            elif 32 <= key <= 126 and len(self.typed_name) < MAX_NAME_LENGTH:
+                self.typed_name += chr(key)
+
+            return
+
+        if key in (ord("q"), ord("Q"), KEY_ESC):
+            self.running = False
+
+        elif key in (ord("s"), ord("S")) and not self.recognition_active:
+            self.start_scan()
 
     # =====================================
-    # ESCI
+    # DISEGNO
     # =====================================
 
-    if key == ord('q'):
-        break
+    def draw(self, frame):
+
+        cv2.putText(
+            frame,
+            self.status_message,
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            self.status_color,
+            2
+        )
+
+        cv2.putText(
+            frame,
+            "S = scan | Q = quit",
+            (10, frame.shape[0] - 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            COLOR_WHITE,
+            1
+        )
+
+        for (top, right, bottom, left), name in zip(self.face_locations, self.face_names):
+
+            color = COLOR_RED if name == UNKNOWN_LABEL else COLOR_GREEN
+
+            cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
+
+            cv2.putText(
+                frame,
+                name,
+                (left, max(15, top - 10)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                COLOR_WHITE,
+                1
+            )
+
+        if self.register_mode:
+
+            cv2.rectangle(frame, (20, 60), (frame.shape[1] - 20, 120), (40, 40, 40), -1)
+
+            cv2.putText(
+                frame,
+                "Inserisci nome:",
+                (30, 90),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                COLOR_WHITE,
+                2
+            )
+
+            cv2.putText(
+                frame,
+                self.typed_name + "_",
+                (30, 115),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                COLOR_YELLOW,
+                2
+            )
 
     # =====================================
-    # MODALITA REGISTRAZIONE
+    # LOOP PRINCIPALE
     # =====================================
 
-    if register_mode:
+    def run(self, camera_index):
 
-        # ENTER
-        if key == 13:
+        cap = cv2.VideoCapture(camera_index)
 
-            if typed_name.strip() != "":
+        if not cap.isOpened():
+            print(f"Impossibile aprire la webcam (indice {camera_index})")
+            return 1
 
-                success = register_new_face(
-                    typed_name.strip(),
-                    unknown_face_image,
-                    unknown_face_encoding,
-                    unknown_face_box
-                )
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-                if success:
+        print("\nPremi:")
+        print("S -> avvia scansione")
+        print("Q -> esci")
 
-                    status_message = f"Registrato: {typed_name}"
-                    status_color = (0, 255, 0)
+        try:
 
-            else:
+            while self.running:
 
-                status_message = "Nome non valido"
-                status_color = (0, 0, 255)
+                ret, frame = cap.read()
 
-            # RESET COMPLETO
+                if not ret:
+                    print("Errore lettura webcam")
+                    break
 
-            register_mode = False
+                # effetto specchio
+                frame = cv2.flip(frame, 1)
 
-            typed_name = ""
+                if self.recognition_active:
+                    self.process_frame(frame)
 
-            unknown_face_image = None
-            unknown_face_encoding = None
-            unknown_face_box = None
+                self.draw(frame)
 
-            recognition_active = False
+                cv2.imshow(WINDOW_NAME, frame)
 
-            processing_frame_count = 0
+                self.handle_key(cv2.waitKey(1) & 0xFF)
 
-            last_face_locations = []
-            last_face_names = []
+                # chiusura con la X della finestra
+                if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
+                    break
 
-            unknown_face_buffer = []
+        finally:
 
-        # BACKSPACE
-        elif key == 8:
+            cap.release()
+            cv2.destroyAllWindows()
 
-            typed_name = typed_name[:-1]
-
-        # TESTO
-        elif 32 <= key <= 126:
-
-            typed_name += chr(key)
-
-    # =====================================
-    # AVVIA SCANSIONE
-    # =====================================
-
-    else:
-
-        if key == ord('s'):
-
-            if not recognition_active:
-
-                recognition_active = True
-
-                processing_frame_count = 0
-
-                unknown_face_buffer = []
-
-                last_recognized = None
-
-                last_face_locations = []
-                last_face_names = []
-
-                status_message = "Scanning..."
-                status_color = (255, 255, 0)
-
-                print("\nScansione avviata")
+        return 0
 
 # =========================================
-# CLEANUP
+# MAIN
 # =========================================
 
-cap.release()
+def parse_args():
 
-cv2.destroyAllWindows()
+    parser = argparse.ArgumentParser(
+        description="Riconoscimento facciale in tempo reale da webcam."
+    )
 
-sys.exit()
+    parser.add_argument(
+        "--camera",
+        type=int,
+        default=CAMERA_INDEX,
+        help=f"indice della webcam (default: {CAMERA_INDEX})"
+    )
+
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=TOLERANCE,
+        help=f"soglia di riconoscimento, più bassa = più severa (default: {TOLERANCE})"
+    )
+
+    parser.add_argument(
+        "--model",
+        choices=["hog", "cnn"],
+        default=MODEL,
+        help=f"modello di rilevamento volti (default: {MODEL})"
+    )
+
+    parser.add_argument(
+        "--faces-dir",
+        default=KNOWN_FACES_DIR,
+        help=f"cartella dei volti noti (default: {KNOWN_FACES_DIR})"
+    )
+
+    return parser.parse_args()
+
+
+def main():
+
+    args = parse_args()
+
+    app = FaceRecognitionApp(args.faces_dir, args.tolerance, args.model)
+
+    return app.run(args.camera)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
