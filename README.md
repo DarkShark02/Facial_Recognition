@@ -1,29 +1,31 @@
 # Facial Recognition
 
-Riconoscimento facciale in tempo reale da webcam, scritto in Python con [OpenCV](https://opencv.org/) e [face_recognition](https://github.com/ageitgey/face_recognition) (basata su dlib).
+Real-time face recognition from your webcam, written in Python with [OpenCV](https://opencv.org/) and [face_recognition](https://github.com/ageitgey/face_recognition) (built on dlib).
 
-Il programma riconosce i volti già registrati e, quando trova un volto sconosciuto stabile davanti alla camera, ti chiede un nome per salvarlo direttamente dall'interfaccia.
+The program recognizes faces you have already registered. When it sees the same unknown face for a few frames, it asks you for a name and saves the face right from the interface.
 
-## Funzionalità
+> The on-screen messages are in Italian (e.g. *Riconosciuto* = Recognized, *Sconosciuto* = Unknown, *Inserisci nome* = Enter name).
 
-- Riconoscimento dei volti in tempo reale dalla webcam
-- Registrazione di nuovi volti dall'interfaccia, senza toccare file o codice
-- Rilevamento di un volto sconosciuto "stabile": l'encoding è la media di più frame della stessa persona, quindi è più affidabile
-- Più foto per la stessa persona, per migliorare il riconoscimento
-- Riquadri colorati: verde per i volti riconosciuti, rosso per gli sconosciuti
-- Opzioni da riga di comando per webcam, tolleranza e modello
-- Tutto in locale: nessun dato viene inviato in rete
+## Features
 
-## Requisiti
+- Real-time face recognition from the webcam
+- Register new faces from the interface, without touching files or code
+- Stable unknown-face detection: the face encoding is averaged over several frames of the same person, so it is more reliable
+- Multiple photos per person for better accuracy
+- Colored boxes: green for recognized faces, red for unknown ones
+- Command-line options for camera, tolerance and detection model
+- Fully offline: no data leaves your computer
 
-- Python 3.9 o superiore (testato con Python 3.10 su Windows)
-- Una webcam
-- Per compilare `dlib` servono **CMake** e un compilatore C++:
-  - **Windows**: [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) con il workload "Sviluppo di applicazioni desktop con C++", più `pip install cmake`
+## Requirements
+
+- Python 3.9 or newer (tested with Python 3.10 on Windows)
+- A webcam
+- **CMake** and a C++ compiler, needed to build `dlib`:
+  - **Windows**: [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload, plus `pip install cmake`
   - **Linux**: `sudo apt install build-essential cmake`
-  - **macOS**: `xcode-select --install` e `brew install cmake`
+  - **macOS**: `xcode-select --install` and `brew install cmake`
 
-## Installazione
+## Installation
 
 ```bash
 git clone https://github.com/DarkShark02/Facial_Recognition.git
@@ -38,94 +40,94 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-L'installazione di `dlib` può richiedere qualche minuto, perché viene compilato.
+Installing `dlib` can take a few minutes because it is compiled from source.
 
-## Utilizzo
+## Usage
 
 ```bash
 python main.py
 ```
 
-### Tasti
+### Keys
 
-| Tasto       | Azione                                   |
-|-------------|------------------------------------------|
-| `S`         | Avvia una scansione                      |
-| `Q` / `ESC` | Esci                                     |
+| Key         | Action          |
+|-------------|-----------------|
+| `S`         | Start a scan    |
+| `Q` / `ESC` | Quit            |
 
-In modalità registrazione:
+While registering a new face:
 
-| Tasto       | Azione                    |
-|-------------|---------------------------|
-| `ENTER`     | Conferma il nome          |
-| `BACKSPACE` | Cancella un carattere     |
-| `ESC`       | Annulla la registrazione  |
+| Key         | Action                  |
+|-------------|-------------------------|
+| `ENTER`     | Confirm the name        |
+| `BACKSPACE` | Delete a character      |
+| `ESC`       | Cancel registration     |
 
-### Opzioni
+### Options
 
 ```bash
 python main.py --camera 1 --tolerance 0.5 --model cnn --faces-dir faces
 ```
 
-| Opzione       | Default | Descrizione |
+| Option        | Default | Description |
 |---------------|---------|-------------|
-| `--camera`    | `0`     | Indice della webcam (prova `1` se hai più camere). |
-| `--tolerance` | `0.6`   | Soglia di somiglianza. Più bassa = più severa (meno falsi positivi). |
-| `--model`     | `hog`   | `hog` è veloce su CPU; `cnn` è più preciso ma molto più lento senza GPU. |
-| `--faces-dir` | `faces` | Cartella dei volti noti. |
+| `--camera`    | `0`     | Webcam index (try `1` if you have more than one camera). |
+| `--tolerance` | `0.6`   | Similarity threshold. Lower = stricter (fewer false matches). |
+| `--model`     | `hog`   | `hog` is fast on CPU; `cnn` is more accurate but much slower without a GPU. |
+| `--faces-dir` | `faces` | Folder containing the known faces. |
 
-### Come funziona una scansione
+### How a scan works
 
-1. Premi `S`: il programma analizza i frame successivi.
-2. Se trova un volto noto, mostra `Riconosciuto: <nome>` e si ferma.
-3. Se vede la stessa persona sconosciuta per più frame, entra in **modalità registrazione**: scrivi il nome e premi `ENTER`. La foto viene salvata in `faces/<nome>/`.
-4. Se entro un certo numero di frame non riconosce nessuno, la scansione si ferma.
+1. Press `S`: the program analyzes the next frames.
+2. If it finds a known face, it shows `Riconosciuto: <name>` and stops.
+3. If it sees the same unknown person for several frames, it enters **registration mode**: type a name and press `ENTER`. The photo is saved in `faces/<name>/`.
+4. If nobody is recognized within a set number of frames, the scan stops.
 
-Se registri di nuovo una persona già presente con lo stesso nome, la nuova foto si aggiunge alle sue, e il riconoscimento migliora.
+Registering a person again with the same name adds a new photo to the existing ones, which improves recognition.
 
-### Aggiungere volti a mano
+### Adding faces manually
 
-Puoi anche mettere le foto direttamente nella cartella `faces/`. Sono supportati due formati:
+You can also put photos directly in the `faces/` folder. Two layouts are supported:
 
 ```
 faces/
-├── mario.jpg          # una foto: il nome del file è il nome della persona
-└── giulia/            # più foto: il nome della cartella è il nome della persona
+├── mario.jpg          # one photo: the file name is the person's name
+└── giulia/            # several photos: the folder name is the person's name
     ├── 1.jpg
     └── 2.png
 ```
 
-Formati supportati: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.webp`. Usa foto ben illuminate, con il volto frontale e una sola persona per foto.
+Supported formats: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.webp`. Use well-lit, front-facing photos with only one person in each.
 
-## Configurazione avanzata
+## Advanced configuration
 
-Altri parametri si trovano all'inizio di [`main.py`](main.py):
+More settings are at the top of [`main.py`](main.py):
 
-| Parametro             | Default | Descrizione |
+| Setting               | Default | Description |
 |-----------------------|---------|-------------|
-| `SCALE_FACTOR`        | `0.25`  | Ridimensionamento dei frame prima dell'analisi (più basso = più veloce, ma i volti lontani vengono persi). |
-| `MAX_SCAN_FRAMES`     | `30`    | Frame analizzati prima che la scansione vada in timeout. |
-| `AUTO_SAVE_UNKNOWN`   | `True`  | Propone di registrare i volti sconosciuti. |
-| `UNKNOWN_BUFFER_SIZE` | `10`    | Frame con lo stesso volto sconosciuto necessari per avviare la registrazione. |
-| `CROP_MARGIN`         | `0.6`   | Margine attorno al volto quando la foto viene salvata. |
+| `SCALE_FACTOR`        | `0.25`  | Frames are resized by this factor before analysis (lower = faster, but distant faces are missed). |
+| `MAX_SCAN_FRAMES`     | `30`    | Frames analyzed before a scan times out. |
+| `AUTO_SAVE_UNKNOWN`   | `True`  | Offer to register unknown faces. |
+| `UNKNOWN_BUFFER_SIZE` | `10`    | Frames with the same unknown face needed before registration starts. |
+| `CROP_MARGIN`         | `0.6`   | Margin added around the face when the photo is saved. |
 
-## Problemi comuni
+## Troubleshooting
 
-- **`pip install` fallisce su `dlib`**: mancano CMake o il compilatore C++, vedi [Requisiti](#requisiti).
-- **"Impossibile aprire la webcam"**: la camera è usata da un altro programma, oppure ha un indice diverso (`--camera 1`).
-- **Riconosce le persone sbagliate**: abbassa la tolleranza (`--tolerance 0.5`) e aggiungi più foto per persona.
-- **Non riconosce chi è registrato**: alza la tolleranza (`--tolerance 0.65`) o aggiungi foto con un'illuminazione simile a quella della webcam.
+- **`pip install` fails on `dlib`**: CMake or the C++ compiler is missing. See [Requirements](#requirements).
+- **"Impossibile aprire la webcam"** (cannot open webcam): another program is using the camera, or it has a different index (`--camera 1`).
+- **Wrong people are recognized**: lower the tolerance (`--tolerance 0.5`) and add more photos per person.
+- **Registered people are not recognized**: raise the tolerance (`--tolerance 0.65`) or add photos taken in lighting similar to your webcam's.
 
 ## Privacy
 
-Le immagini dei volti sono dati biometrici. La cartella `faces/` è esclusa da git (`.gitignore`), così le foto restano sul tuo computer. Non registrare persone senza il loro consenso.
+Face images are biometric data. The `faces/` folder is excluded from git (see `.gitignore`), so your photos stay on your computer. Don't register people without their consent.
 
-## Licenza
+## License
 
-Distribuito con licenza [MIT](LICENSE).
+Released under the [MIT License](LICENSE).
 
-## Crediti
+## Credits
 
-- [face_recognition](https://github.com/ageitgey/face_recognition) di Adam Geitgey
-- [dlib](http://dlib.net/) di Davis King
+- [face_recognition](https://github.com/ageitgey/face_recognition) by Adam Geitgey
+- [dlib](http://dlib.net/) by Davis King
 - [OpenCV](https://opencv.org/)
